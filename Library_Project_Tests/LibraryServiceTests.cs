@@ -167,6 +167,74 @@ namespace Library_Project_Tests
             Assert.True(borrowRecord.IsLate);
             _borrowRepo.Verify(r => r.UpdateBorrow(borrowRecord), Times.Once);
         }
+        
+        // R7. Член може одночасно позичити максимум 5 книг.
+        [Fact]
+        public void Requirement07_BorrowBook_ShouldThrow_WhenLimitExceeded()
+        {
+            // Arrange
+            int memberId = 1;
+            string title = "Book 6";
+            var member = new Member { Id = memberId, Status = "Active" };
+            var book = new Book { Title = title, Copies = 5 };
+
+            _member.Setup(m => m.GetMember(memberId)).Returns(member);
+            _bookRepo.Setup(b => b.FindBook(title)).Returns(book);
+            
+            // Імітуємо, що у користувача вже є 5 активних книг
+            var activeBorrows = new List<BorrowRecord> 
+            { 
+                new BorrowRecord(), new BorrowRecord(), new BorrowRecord(), new BorrowRecord(), new BorrowRecord() 
+            };
+            _borrowRepo.Setup(br => br.GetActiveBorrows(memberId)).Returns(activeBorrows);
+
+            // Act & Assert
+            var ex = Assert.Throws<InvalidOperationException>(() => _service.BorrowBook(memberId, title));
+            Assert.Equal("Borrow limit exceeded.", ex.Message);
+        }
+        
+        // R8. Член не може позичати книги, якщо має прострочені книги.
+        [Fact]
+        public void Requirement08_BorrowBook_ShouldThrow_WhenMemberHasOverdueBooks()
+        {
+            // Arrange
+            int memberId = 1;
+            string title = "New Book";
+            var member = new Member { Id = memberId, Status = "Active", HasOverdueBooks = true };
+
+            _member.Setup(m => m.GetMember(memberId)).Returns(member);
+
+            // Act & Assert
+            var ex = Assert.Throws<InvalidOperationException>(() => _service.BorrowBook(memberId, title));
+            Assert.Equal("Member has overdue books.", ex.Message);
+        }
+        
+        // R9. Статус члена може бути активним або призупиненим.
+        [Fact]
+        public void Requirement09_ShouldPreventBorrowing_WhenMemberIsSuspended()
+        {
+            // Arrange
+            var member = new Member {Status = "Suspended"};
+            var book = new Book{ Title = "Book", Copies = 1};
+
+            // Act & Assert
+            Assert.Throws<InvalidOperationException>(() => _service.BorrowBook(member.Id, book.Title));
+        }
+        
+        // R10. Член повинен підтвердити повернення цифровим підписом.
+        [Fact]
+        public void Requirement10_ShouldFailReturn_WhenSignatureIsMissing()
+        {
+            // Arrange
+            int memberId = 1;
+            string title = "Book Title";
+
+            // Act & Assert
+            var ex = Assert.Throws<InvalidOperationException>(() => 
+                _service.ReturnBook(memberId, title, signatureConfirmed: false));
+
+            Assert.Equal("Return must be confirmed with signature.", ex.Message);
+        }
 
     }
 }
