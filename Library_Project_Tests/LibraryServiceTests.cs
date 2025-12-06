@@ -235,6 +235,119 @@ namespace Library_Project_Tests
 
             Assert.Equal("Return must be confirmed with signature.", ex.Message);
         }
+        
+        // R11. Позичання створює запис BorrowRecord, який зберігається в сховищі.
+        [Fact]
+        public void Requirement11_BorrowBook_ShouldSaveBorrowRecord()
+        {
+            // Arrange
+            int memberId = 1;
+            string title = "Book A";
+            var member = new Member { Id = memberId, Status = "Active" };
+            var book = new Book { Title = title, Copies = 1 };
+
+            _member.Setup(m => m.GetMember(memberId)).Returns(member);
+            _bookRepo.Setup(b => b.FindBook(title)).Returns(book);
+            _borrowRepo.Setup(br => br.GetActiveBorrows(memberId)).Returns(new List<BorrowRecord>());
+
+            // Act
+            _service.BorrowBook(memberId, title);
+
+            // Assert
+            _borrowRepo.Verify(r => r.SaveBorrow(It.IsAny<BorrowRecord>()), Times.Once);
+        }
+        
+        // R12. Система запобігає одночасному позичанню одного і того ж видання двічі.
+        [Fact]
+        public void Requirement12_BorrowBook_ShouldThrow_WhenBorrowingSameBookTwice()
+        {
+            // Arrange
+            int memberId = 1;
+            string title = "Book A";
+            var member = new Member { Id = memberId, Status = "Active" };
+            var book = new Book { Title = title, Copies = 5 };
+
+            _member.Setup(m => m.GetMember(memberId)).Returns(member);
+            _bookRepo.Setup(b => b.FindBook(title)).Returns(book);
+            
+            // Імітуємо, що ця книга вже є у списку активних
+            var activeBorrows = new List<BorrowRecord> { new BorrowRecord { Title = title } };
+            _borrowRepo.Setup(br => br.GetActiveBorrows(memberId)).Returns(activeBorrows);
+
+            // Act & Assert
+            var ex = Assert.Throws<InvalidOperationException>(() => _service.BorrowBook(memberId, title));
+            Assert.Equal("Cannot borrow the same book twice.", ex.Message);
+        }
+        
+        // R13. Система реєструє всі операції позичання в службі аудиту.
+        [Fact]
+        public void Requirement13_BorrowBook_ShouldLogAudit()
+        {
+            // Arrange
+            int memberId = 1;
+            string title = "Book A";
+            var member = new Member { Id = memberId, Status = "Active" };
+            var book = new Book { Title = title, Copies = 1 };
+
+            _member.Setup(m => m.GetMember(memberId)).Returns(member);
+            _bookRepo.Setup(b => b.FindBook(title)).Returns(book);
+            _borrowRepo.Setup(br => br.GetActiveBorrows(memberId)).Returns(new List<BorrowRecord>());
+
+            // Act
+            _service.BorrowBook(memberId, title);
+
+            // Assert
+            _audit.Verify(a => a.LogBorrow(memberId, title), Times.Once);
+        }
+        
+        // R14. Коли член повертає останню книгу, система надсилає повідомлення.
+        [Fact]
+        public void Requirement14_ReturnBook_ShouldNotifyAllReturned_WhenNoBorrowsLeft()
+        {
+            // Arrange
+            int memberId = 1;
+            string title = "Last Book";
+            var borrowRecord = new BorrowRecord { MemberId = memberId, Title = title };
+
+            _borrowRepo.Setup(r => r.GetBorrowRecord(memberId, title)).Returns(borrowRecord);
+            _bookRepo.Setup(b => b.FindBook(title)).Returns(new Book { Title = title, Copies = 1 });
+            
+            // Головне: імітуємо, що після повернення активних записів немає (порожній список)
+            _borrowRepo.Setup(r => r.GetActiveBorrows(memberId)).Returns(new List<BorrowRecord>());
+
+            // Act
+            _service.ReturnBook(memberId, title, signatureConfirmed: true);
+
+            // Assert
+            _notification.Verify(n => n.NotifyAllReturned(memberId), Times.Once);
+        }
+        
+        // R15. Повернення книги спричиняє розрахунок штрафу, якщо вона повернута з запізненням.
+        [Fact]
+        public void Requirement15_ReturnBook_ShouldApplyFine_WhenLate()
+        {
+            // Arrange
+            int memberId = 1;
+            string title = "Late Book";
+            // Встановлюємо дату повернення в минуле
+            var borrowRecord = new BorrowRecord 
+            { 
+                MemberId = memberId, 
+                Title = title, 
+                DueDate = DateTime.Now.AddDays(-5) 
+            };
+
+            _borrowRepo.Setup(r => r.GetBorrowRecord(memberId, title)).Returns(borrowRecord);
+            _bookRepo.Setup(b => b.FindBook(title)).Returns(new Book { Title = title, Copies = 1 });
+            
+            _borrowRepo.Setup(r => r.GetActiveBorrows(memberId)).Returns(new List<BorrowRecord>());
+
+            // Act
+            _service.ReturnBook(memberId, title, signatureConfirmed: true);
+
+            // Assert
+            _fineService.Verify(f => f.ApplyFine(memberId, title), Times.Once);
+        }
 
     }
 }
